@@ -1,0 +1,59 @@
+#! /bin/bash
+
+set -e 
+trap "exit 1;" INT TERM EXIT
+
+# exec > >(tee $0.log)
+# exec 2>&1
+
+function extract-pom-files() {
+  local file="$1"
+  if [ ! -f "$file-pom.properties" ]; then
+    echo -n "Extracting pom files from $file..."
+    rm -rf "$file.tmp"
+    mkdir "$file.tmp"
+    pushd "$file.tmp" > /dev/null 
+    jar xvf "../$file" META-INF/maven >/dev/null 2>&1 || true
+    if find . -name "pom.xml" -exec mv {} "../$file-pom.xml" \; ; then
+      find . -name "pom.properties" -exec mv {} "../$file-pom.properties" \; || true
+      echo "done."
+    else 
+      echo "pom.xml file not found.";
+    fi
+    popd > /dev/null
+    rm -rf "$file.tmp"
+  fi
+  [ -f "$file-pom.properties" ] # return value
+}
+
+MVN_INSTALL="mvn install:install-file "
+if [ -n "$REPOSITORY_ID" ]; then
+  echo "Artifacts will be deployed to $REPOSITORY_ID - $REPOSITORY_URL"
+  MVN_INSTALL="mvn deploy:deploy-file -DrepositoryId=$REPOSITORY_ID -Durl=$REPOSITORY_URL "
+fi
+
+function mvn-install() {
+  local file="$1"
+  local pom="$2"
+  echo -n "Installing $file in maven repository..."
+  if $MVN_INSTALL "-Dfile=$file" "-DpomFile=$pom"  >mvn.log 2>&1; then
+    echo "done."
+  else 
+    mkdir -p errors
+    cp "$file"* errors
+      
+    echo ""
+    echo "Error occured installing $file to maven repository.  See mvn.log for details."
+    echo "This may occur when pom.xml file uses variables.  Modify pom.xml and retry."
+    echo "mvn install:install-file -Dfile=$file -DpomFile=$file-pom.xml"
+    echo "Files copied to errors folder."
+  fi
+}
+
+for file in $*; do
+  if extract-pom-files "$file"; then
+      mvn-install "$file" "$file-pom.xml"
+  else 
+    echo "$file does not contain maven pom."
+  fi
+done
